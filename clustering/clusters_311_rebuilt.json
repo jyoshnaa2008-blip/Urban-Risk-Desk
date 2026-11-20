@@ -1,0 +1,179 @@
+{
+  "project": "NYC 311 urban risk clustering",
+  "data_file": "nyc311_clean(2).csv",
+  "training_window": {
+    "start": "2026-10-16 18:42:57",
+    "end": "2026-10-24 23:59:58",
+    "cutoff_exclusive": "2026-10-25"
+  },
+  "method": {
+    "unit_of_analysis": "ZIP code x complaint type",
+    "minimum_complaints_per_group": 20,
+    "features": [
+      "log_volume",
+      "weekend_share",
+      "overnight",
+      "morning",
+      "afternoon",
+      "evening"
+    ],
+    "excluded_fields": [
+      "slow_48h",
+      "closed_date",
+      "hours_to_close",
+      "status"
+    ],
+    "scaling": "StandardScaler",
+    "algorithms_compared": [
+      "KMeans",
+      "Agglomerative Ward"
+    ],
+    "k_values": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "selected_model": "KMeans",
+    "selected_k": 2,
+    "selection_note": "KMeans K=2 is retained as the operational model because it supports predict() for assigning future ZIP/type groups. Agglomerative Ward K=2 has marginally better internal separation scores (silhouette and Davies-Bouldin); this trade-off is disclosed rather than claiming KMeans is the metric winner."
+  },
+  "data_counts": {
+    "source_rows": 254439,
+    "training_rows_with_zip_and_type": 95535,
+    "zip_type_groups_before_minimum_support": 10074,
+    "groups_after_minimum_support": 959
+  },
+  "comparison": [
+    {
+      "k": 2,
+      "method": "KMeans",
+      "silhouette": 0.32465007566411963,
+      "davies_bouldin": 1.2343447478598297
+    },
+    {
+      "k": 2,
+      "method": "Agglomerative Ward",
+      "silhouette": 0.32690845358540643,
+      "davies_bouldin": 1.2072196403143187
+    },
+    {
+      "k": 3,
+      "method": "KMeans",
+      "silhouette": 0.24248952514458877,
+      "davies_bouldin": 1.4195476432232699
+    },
+    {
+      "k": 3,
+      "method": "Agglomerative Ward",
+      "silhouette": 0.22996978285592393,
+      "davies_bouldin": 1.3415585256839453
+    },
+    {
+      "k": 4,
+      "method": "KMeans",
+      "silhouette": 0.2168799276966555,
+      "davies_bouldin": 1.4589743658185736
+    },
+    {
+      "k": 4,
+      "method": "Agglomerative Ward",
+      "silhouette": 0.1723594597487279,
+      "davies_bouldin": 1.713129907697097
+    },
+    {
+      "k": 5,
+      "method": "KMeans",
+      "silhouette": 0.19998366640658147,
+      "davies_bouldin": 1.5801018248073468
+    },
+    {
+      "k": 5,
+      "method": "Agglomerative Ward",
+      "silhouette": 0.1736408437554815,
+      "davies_bouldin": 1.594971866829441
+    }
+  ],
+  "bootstrap_stability": {
+    "method": "80% bootstrap with-replacement; ARI evaluated on out-of-bag groups only",
+    "replicates": 100,
+    "sample_fraction": 0.8,
+    "mean_adjusted_rand_index": 0.9459483488186098,
+    "std_adjusted_rand_index": 0.05140833058416875,
+    "p10": 0.9084676115627925,
+    "median": 0.9526316156841836,
+    "p90": 0.9817240232783896
+  },
+  "profiles": {
+    "0": {
+      "group_count": 652,
+      "mean_complaints_per_zip_type_group": 63.0,
+      "median_complaints_per_zip_type_group": 37.0,
+      "mean_weekend_share": 0.31,
+      "mean_daypart_shares": {
+        "overnight": 0.083,
+        "morning": 0.356,
+        "afternoon": 0.338,
+        "evening": 0.223
+      },
+      "top_complaint_types_by_volume": {
+        "HEAT/HOT WATER": 12715,
+        "Illegal Parking": 12700,
+        "Blocked Driveway": 3081,
+        "UNSANITARY CONDITION": 2931,
+        "PLUMBING": 1086,
+        "PAINT/PLASTER": 1073,
+        "GENERAL": 734,
+        "DOOR/WINDOW": 728
+      },
+      "top_zip_codes_by_volume": {
+        "10457": 807,
+        "10456": 788,
+        "10468": 777,
+        "10031": 776,
+        "10458": 764,
+        "10453": 762,
+        "10467": 748,
+        "11226": 712
+      }
+    },
+    "1": {
+      "group_count": 307,
+      "mean_complaints_per_zip_type_group": 60.72,
+      "median_complaints_per_zip_type_group": 44.0,
+      "mean_weekend_share": 0.471,
+      "mean_daypart_shares": {
+        "overnight": 0.224,
+        "morning": 0.115,
+        "afternoon": 0.154,
+        "evening": 0.506
+      },
+      "top_complaint_types_by_volume": {
+        "Noise - Residential": 8782,
+        "Noise - Street/Sidewalk": 3228,
+        "Illegal Parking": 2483,
+        "Noise - Commercial": 1123,
+        "Blocked Driveway": 961,
+        "HEAT/HOT WATER": 800,
+        "Noise": 319,
+        "Noise - Vehicle": 256
+      },
+      "top_zip_codes_by_volume": {
+        "11226": 996,
+        "11368": 497,
+        "11385": 478,
+        "10456": 399,
+        "10467": 393,
+        "11221": 376,
+        "11372": 366,
+        "10458": 353
+      }
+    }
+  },
+  "caveats": [
+    "Clusters describe ZIP/type complaint timing and volume patterns, not causal risk.",
+    "Only ZIP/type groups with at least 20 training-period complaints are included.",
+    "The data covers a short period and should not be interpreted as seasonal or long-term citywide patterns.",
+    "slow_48h is not included in the feature matrix and was not used to fit clusters."
+  ]
+}

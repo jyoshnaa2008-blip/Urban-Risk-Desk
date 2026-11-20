@@ -1,0 +1,20 @@
+{
+  "Logistic Regression": {
+    "PR_AUC": 0.476,
+    "ROC_AUC": 0.598,
+    "Brier": 0.286,
+    "top20_precision": 0.53
+  },
+  "Random Forest": {
+    "PR_AUC": 0.55,
+    "ROC_AUC": 0.623,
+    "Brier": 0.277,
+    "top20_precision": 0.557
+  },
+  "HistGradientBoosting": {
+    "PR_AUC": 0.533,
+    "ROC_AUC": 0.626,
+    "Brier": 0.277,
+    "top20_precision": 0.568
+  }
+}

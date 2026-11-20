@@ -1,0 +1,148 @@
+"""
+NYC 311 pipeline: predict which complaints stay unclosed after 48 hours.
+Usage: python pipeline_311.py path/to/export.csv [output_dir]
+
+Steps: clean -> 48h target -> time-based split -> compare variants -> daily recalibration -> priority table.
+Every feature uses only information available at the moment a complaint is filed.
+"""
+import sys, os, json
+import numpy as np, pandas as pd, joblib
+from scipy.optimize import brentq
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import average_precision_score, roc_auc_score, brier_score_loss
+
+PATH = sys.argv[1] if len(sys.argv) > 1 else "export.csv"
+OUT = sys.argv[2] if len(sys.argv) > 2 else "."
+os.makedirs(OUT, exist_ok=True)
+H = 48                      # hours: "slow" = not closed within H hours
+TRAIN_END = "2026-10-25"    # train: before this date
+VAL_END = "2026-10-28"      # validation (calibration reservoir): TRAIN_END..VAL_END; test: after
+NS = 10**9
+
+COLS = {"Unique Key": "key", "Created Date": "created", "Closed Date": "closed", "Agency": "ag",
+        "Problem (formerly Complaint Type)": "pt", "Borough": "b", "Incident Zip": "zip",
+        "Open Data Channel Type": "ch"}
+
+def parse_dates(s):
+    out = pd.to_datetime(s, format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
+    for f in ("%m-%d-%Y %H:%M", "%m-%d-%Y %H:%M:%S"):   # the export mixes formats
+        out = out.fillna(pd.to_datetime(s, format=f, errors="coerce"))
+    return out
+
+def load(path):
+    df = pd.read_csv(path, usecols=list(COLS), dtype=str, low_memory=False).rename(columns=COLS)
+    n0 = len(df)
+    df = df[df["key"] != df["created"]]                      # junk rows repeat one value in every field
+    df["created"] = parse_dates(df["created"]); df["closed"] = parse_dates(df["closed"])
+    df = df[df["created"].notna()].copy()
+    df["hrs"] = (df["closed"] - df["created"]).dt.total_seconds() / 3600
+    df = df[~(df["hrs"] < 0)].copy()                         # closed before created
+    df["pt"] = df["pt"].fillna("NA").str.upper(); df["zip"] = df["zip"].fillna("NA").str.replace(".0", "", regex=False)
+    df["b"] = df["b"].fillna("NA"); df["ch"] = df["ch"].fillna("NA")
+    df = df.sort_values("created").reset_index(drop=True)
+    print(f"rows read {n0:,} -> clean {len(df):,}; created {df.created.min()} to {df.created.max()}")
+    return df
+
+def backlog(df, key, prefix):
+    """Open complaints and prior-24h volume for the same key, as known at each complaint's filing time."""
+    t = df["created"].values.astype("int64")
+    c = df["closed"].values.astype("int64"); has = df["closed"].notna().values
+    op = np.zeros(len(df)); vol = np.zeros(len(df))
+    for _, idx in df.groupby(key).indices.items():
+        cr = np.sort(t[idx]); cl = np.sort(c[idx][has[idx]]); ti = t[idx]
+        op[idx] = np.searchsorted(cr, ti) - np.searchsorted(cl, ti)
+        vol[idx] = np.searchsorted(cr, ti) - np.searchsorted(cr, ti - 24 * 3600 * NS)
+    df[prefix + "_open"] = op; df[prefix + "_v24"] = vol
+
+def recent_rate(d, key, lag=3, win=7):
+    """Slow rate of the same key over a trailing window that ends `lag` days ago (outcomes already known)."""
+    daily = d.groupby([key, "day"]).slow.agg(["sum", "count"]).reset_index(); outs = []
+    for k, gq in daily.groupby(key):
+        idx = pd.date_range(gq.day.min() - pd.Timedelta(days=lag + win), gq.day.max(), freq="D")
+        sm = gq.set_index("day")["sum"].reindex(idx, fill_value=0); n = gq.set_index("day")["count"].reindex(idx, fill_value=0)
+        rs = sm.rolling(win).sum().shift(lag); rn = n.rolling(win).sum().shift(lag)
+        outs.append(pd.DataFrame({key: k, "day": idx, key + "_rr": (rs / rn).where(rn >= 20)}))
+    return d.merge(pd.concat(outs), on=[key, "day"], how="left")
+
+def build():
+    df = load(PATH)
+    end = df["created"].max()
+    backlog(df, "ag", "ag"); backlog(df, "pt", "pt")
+    df["hour"] = df.created.dt.hour; df["dow"] = df.created.dt.dayofweek
+    d = df.created.dt.floor("D"); cnt = df.groupby(["pt", d]).size().rename("prev").reset_index()
+    cnt["created"] = cnt["created"] + pd.Timedelta(days=1); cnt.columns = ["pt", "day", "prev"]
+    df["day"] = d; df = df.merge(cnt, on=["pt", "day"], how="left"); df["prev"] = df["prev"].fillna(0)
+    df = df[df.created <= end - pd.Timedelta(hours=H)].copy()   # outcome known
+    df["slow"] = (df["closed"].isna() | (df["hrs"] > H)).astype(int)
+    df = recent_rate(df, "pt"); df = recent_rate(df, "ag")
+    return df
+
+def metrics(y, p):
+    k = int(0.2 * len(p)); top = np.argsort(-p)[:k]
+    return {"PR_AUC": round(average_precision_score(y, p), 3), "ROC_AUC": round(roc_auc_score(y, p), 3),
+            "Brier": round(brier_score_loss(y, p), 3), "mean_pred": round(float(p.mean()), 3),
+            "actual": round(float(y.mean()), 3), "top20_precision": round(float(y[top].mean()), 3),
+            "top20_lift": round(float(y[top].mean() / y.mean()), 2)}
+
+def daily_recalibrate(df, p, test_mask, window_days=7):
+    """For each test day, shift log-odds so mean prediction matches outcomes already known (created >= 48h earlier)."""
+    lo = np.log(np.clip(p, 1e-6, 1 - 1e-6) / (1 - np.clip(p, 1e-6, 1 - 1e-6)))
+    out = p.copy(); y = df["slow"].values; t = df["created"]
+    pool = ~(df["created"] < TRAIN_END).values       # out-of-sample rows only (validation + test)
+    for day in sorted(t[test_mask].dt.floor("D").unique()):
+        known = pool & (t < day - pd.Timedelta(hours=H)).values & (t >= day - pd.Timedelta(days=window_days + 2)).values
+        rows = test_mask & (t.dt.floor("D") == day).values
+        if known.sum() < 300 or y[known].min() == y[known].max(): continue
+        f = lambda s: (1 / (1 + np.exp(-(lo[known] + s)))).mean() - y[known].mean()
+        try: s = brentq(f, -5, 5)
+        except ValueError: continue
+        out[rows] = 1 / (1 + np.exp(-(lo[rows] + s)))
+    return out
+
+def main():
+    df = build()
+    g = df[df.created < TRAIN_END].groupby("pt").slow.agg(["size", "mean"])   # choose types from TRAIN only (no peeking)
+    mixed = list(g[(g["size"] >= 1500) & (g["mean"].between(0.15, 0.85))].index)
+    print(f"{len(mixed)} mixed-outcome complaint types (chosen on training period only): {mixed}")
+    d = df[df.pt.isin(mixed)].reset_index(drop=True)
+    tr = (d.created < TRAIN_END).values; va = ((d.created >= TRAIN_END) & (d.created < VAL_END)).values; te = (d.created >= VAL_END).values
+    y = d["slow"].values
+    print(f"subset {len(d):,} rows | train {tr.sum():,} (slow {y[tr].mean():.3f}) | validation {va.sum():,} ({y[va].mean():.3f}) | test {te.sum():,} ({y[te].mean():.3f})")
+    cat = ["pt", "ag", "b", "ch", "zip"]; basic = ["hour", "dow"]
+    sets = {"B  boosting, basic features": basic,
+            "R  B + recent slow rate (type, agency)": basic + ["pt_rr", "ag_rr"],
+            "C  R + backlog features": basic + ["pt_rr", "ag_rr", "ag_open", "ag_v24", "pt_open", "pt_v24"]}
+    def gb(num):
+        pre = ColumnTransformer([("c", OneHotEncoder(handle_unknown="ignore", min_frequency=20, sparse_output=False), cat), ("n", "passthrough", num)])
+        return make_pipeline(pre, HistGradientBoostingClassifier(max_depth=5, learning_rate=0.06, max_iter=150, min_samples_leaf=40, random_state=0))
+    res, val_score, models = {}, {}, {}
+    rate = d[tr].groupby("pt").slow.mean()
+    res["A0 baseline: type slow-rate from training"] = metrics(y[te], d.loc[te, "pt"].map(rate).fillna(y[tr].mean()).values)
+    res["A1 baseline: type slow-rate of last week"] = metrics(y[te], d.loc[te, "pt_rr"].fillna(y[tr].mean()).values)
+    for name, num in sets.items():
+        m = gb(num).fit(d[tr][cat + num], y[tr]); models[name] = (m, cat + num)
+        val_score[name] = average_precision_score(y[va], m.predict_proba(d[va][cat + num])[:, 1])
+        res[name] = metrics(y[te], m.predict_proba(d[te][cat + num])[:, 1])
+    best = max(val_score, key=val_score.get)                   # chosen on VALIDATION, not test
+    print("validation PR-AUC by variant:", {k[:2]: round(v, 3) for k, v in val_score.items()}, "-> chosen:", best[:2])
+    bm, bcols = models[best]; pall = bm.predict_proba(d[bcols])[:, 1]; pcal = daily_recalibrate(d, pall, te)
+    res[f"E  {best[:2]} + daily recalibration (final)"] = metrics(y[te], pcal[te])
+    print("\nVARIANT COMPARISON on unseen test weeks (PR/ROC higher is better; Brier lower; mean_pred should match actual)")
+    print(pd.DataFrame(res).T.to_string())
+    d["p"] = pcal; t = d[te]
+    pri = t[t.zip != "NA"].groupby(["zip", "pt"]).agg(complaints=("slow", "size"), expected_slow=("p", "sum"), actual_slow=("slow", "sum")).reset_index()
+    pri["priority_score"] = pri["expected_slow"].round(1); pri = pri.sort_values("priority_score", ascending=False)
+    top = pri.head(max(1, int(0.1 * len(pri)))); cap = top["actual_slow"].sum() / pri["actual_slow"].sum()
+    vol = pri.sort_values("complaints", ascending=False).head(len(top)); capv = vol["actual_slow"].sum() / pri["actual_slow"].sum()
+    print(f"\nPriority check: top 10% of (ZIP, type) groups hold {cap:.1%} of actually-slow complaints by model score vs {capv:.1%} by raw complaint volume")
+    pri.to_csv(os.path.join(OUT, "priority_by_zip_type.csv"), index=False)
+    joblib.dump({"model": bm, "features": bcols, "mixed_types": mixed, "threshold_hours": H}, os.path.join(OUT, "model_311.joblib"))
+    json.dump({"variants": res, "validation_pr_auc": val_score, "chosen": best, "priority_capture_model": round(float(cap), 3), "priority_capture_volume": round(float(capv), 3), "mixed_types": mixed}, open(os.path.join(OUT, "results.json"), "w"), indent=2)
+    print("\nsaved: model_311.joblib, results.json, priority_by_zip_type.csv in", OUT)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,45 @@
+- generic [active] [ref=f4e1]:
+  - complementary [ref=f4e5]:
+    - generic [ref=f4e6]:
+      - heading "URBAN RISK DESK" [level=2] [ref=f4e7]
+      - text: INTEGRATED URBAN RISK INTELLIGENCE
+    - navigation [ref=f4e8]:
+      - list [ref=f4e9]:
+        - listitem [ref=f4e10] [cursor=pointer]: 01 Overview
+        - listitem [ref=f4e16] [cursor=pointer]: 02 Geographic Risk Map
+        - listitem [ref=f4e19] [cursor=pointer]: 03 Resource Priority Board
+        - listitem [ref=f4e21] [cursor=pointer]: 04 Complaint Triage
+        - listitem [ref=f4e25] [cursor=pointer]: 05 Model Analytics
+        - listitem [ref=f4e28] [cursor=pointer]: 06 Complaint Clusters
+        - listitem [ref=f4e32] [cursor=pointer]: 07 What-If Simulator
+    - generic [ref=f4e35]:
+      - generic [ref=f4e36]: SYSTEM OPERATIONAL
+      - paragraph [ref=f4e38]: "DATA FRESHNESS: 15 NOV 2026"
+  - main [ref=f4e39]:
+    - generic [ref=f4e40]:
+      - generic [ref=f4e41]:
+        - heading "OVERVIEW" [level=1] [ref=f4e224]
+        - paragraph [ref=f4e43]: City-wide risk analytics and complaint intelligence summary.
+      - generic [ref=f4e44]:
+        - button "Export Report" [ref=f4e45] [cursor=pointer]
+        - button "Settings" [ref=f4e49] [cursor=pointer]
+    - generic [ref=f4e52]:
+      - generic [ref=f4e53]:
+        - generic [ref=f4e54]:
+          - heading "Total Complaints" [level=3] [ref=f4e55]
+          - generic [ref=f4e56]: 254,439
+        - generic [ref=f4e58]:
+          - heading "Slow Complaint Rate" [level=3] [ref=f4e59]
+          - generic [ref=f4e60]: 34.7%
+        - generic [ref=f4e62]:
+          - heading "Open Complaints" [level=3] [ref=f4e63]
+          - generic [ref=f4e64]: 48,547
+        - generic [ref=f4e66]:
+          - heading "Complaint Clusters" [level=3] [ref=f4e67]
+          - generic [ref=f4e68]: 2 Groups
+      - generic [ref=f4e69]:
+        - heading "Borough Distribution" [level=3] [ref=f4e72]
+        - heading "Volume Trends" [level=3] [ref=f4e76]
+      - generic [ref=f4e79]:
+        - heading "Geographic Risk Preview" [level=3] [ref=f4e80]
+        - button "Open Full Map" [ref=f4e81] [cursor=pointer]
