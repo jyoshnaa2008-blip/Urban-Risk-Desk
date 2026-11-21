@@ -492,37 +492,51 @@ def predict(request: PredictionRequest):
     # These historical rates are calculated from the cleaned dataset, not fabricated constants.
     pt_rate = get_recent_rate("complaint_type", request.complaint_type, 0.0)
     ag_rate = get_recent_rate("agency", request.agency, 0.0)
+    
+
     row = {
-        "pt": request.complaint_type.upper(),
-        "ag": request.agency.upper(),
-        "b": request.borough.upper(),
-        "ch": request.channel.upper(),
-        "zip": clean_zip(request.incident_zip),
+        "complaint_type": request.complaint_type.upper(),
+        "agency": request.agency.upper(),
+        "borough": request.borough.upper(),
+        "channel": request.channel.upper(),
+        "incident_zip": clean_zip(request.incident_zip),
         "hour": request.hour,
         "dow": request.dow,
         "pt_rr": pt_rate,
         "ag_rr": ag_rate,
     }
+
     missing = [feature for feature in features if feature not in row]
     if missing:
-        raise HTTPException(status_code=500, detail=f"Model expects unsupported features: {missing}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Model expects unsupported features: {missing}"
+        )
+
     try:
-        input_frame = pd.DataFrame([{feature: row[feature] for feature in features}])
+        input_frame = pd.DataFrame([
+            {feature: row[feature] for feature in features}
+        ])
         probability = float(model.predict_proba(input_frame)[:, 1][0])
     except Exception as exc:
         LOG.exception("Model prediction failed")
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction failed: {exc}"
+        ) from exc
 
     tier = "High" if probability >= 0.66 else "Medium" if probability >= 0.45 else "Low"
+
     return {
         "probability": round(probability, 4),
-        "prob": round(probability, 4),  # compatibility with the earlier frontend
+        "prob": round(probability, 4),
         "tier": tier,
         "color": {"High": "magenta", "Medium": "yellow", "Low": "green"}[tier],
         "pt_historical_slow_rate": round(pt_rate, 4),
         "agency_historical_slow_rate": round(ag_rate, 4),
         "target": "Complaint remains unresolved beyond 48 hours",
     }
+
 
 def scenario_rows():
     with sqlite3.connect(DB_PATH) as conn:
@@ -532,6 +546,7 @@ def scenario_rows():
             "FROM scenarios ORDER BY id DESC"
         ).fetchall()
     return [dict(row) for row in rows]
+
 
 @app.get("/api/scenarios")
 def list_scenarios():
